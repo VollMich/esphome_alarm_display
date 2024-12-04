@@ -1,0 +1,273 @@
+esphome:
+  name: alarmdisplay
+  platform: ESP8266
+  board: esp01_1m
+  esp8266_restore_from_flash: True
+
+wifi:
+  ssid: "xxx"
+  password: "xxx"
+  domain: .fritz.box
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "alarmdisplay fallback"
+    password: "xxx"
+
+web_server: 
+  port: 80
+  auth:
+    username: xxx
+    password: xxx
+
+button:
+- platform: restart
+  name: Restart
+  entity_category: diagnostic
+  icon: mdi:restart
+  device_class: restart
+
+captive_portal:
+
+logger:
+
+api:
+  password: "xxx"
+
+ota:
+  platform: esphome
+  password: "xxx"
+
+time:
+  - platform: homeassistant
+    id: esptime
+    timezone: Europe/Berlin
+
+text_sensor:
+  - platform: template
+    name: "Uptime"
+    id: uptime_human
+    icon: mdi:clock-start
+
+  - platform: homeassistant
+    entity_id: alarm_control_panel.home_alarm
+    name: "Alarm State"
+    id: alarm_state
+    entity_category: "diagnostic"
+  
+  - platform: homeassistant
+    entity_id: sensor.your_sensor_name
+    name: "Outdoor Temperature"
+    id: outdoor_temperature
+    entity_category: "diagnostic"
+
+sensor:
+  - platform: wifi_signal # Reports the WiFi signal strength/RSSI in dB
+    name: WiFi Signal dB
+    id: wifi_signal_db
+    update_interval: 60s
+    entity_category: "diagnostic"
+
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: WiFi Signal Percent
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: "diagnostic"
+
+  - platform: uptime
+    id: uptime_sensor
+    internal: True
+    on_raw_value:
+      then:
+        - text_sensor.template.publish:
+            id: uptime_human
+            state: !lambda |-
+              int seconds = round(id(uptime_sensor).raw_state);
+              int days = seconds / (24 * 3600);
+              seconds = seconds % (24 * 3600);
+              int hours = seconds / 3600;
+              seconds = seconds % 3600;
+              int minutes = seconds /  60;
+              seconds = seconds % 60;
+              return (
+                (days ? to_string(days) + "d " : "") +
+                (hours ? to_string(hours) + "h " : "") +
+                (minutes ? to_string(minutes) + "m " : "") +
+                (to_string(seconds) + "s")
+              ).c_str();
+
+font:  
+  - file: "slkscr.ttf"
+    id: slkscr
+    size: 8
+  - file: "BebasNeue-Regular.ttf"
+    id: bebas
+    size: 25
+  - file: "BebasNeue-Regular.ttf"
+    id: bebasbig
+    size: 30
+  - file: "gfonts://Roboto"
+    id: roboto
+    size: 18
+
+image:
+  - file: mdi:thermometer-low
+    id: inactive
+    resize: 32x32
+
+  - file: mdi:shield-home-outline
+    id: armed_home
+    resize: 32x32
+
+  - file: mdi:lock
+    id: armed_away
+    resize: 32x32
+
+  - file: mdi:lock-outline
+    id: arming1
+    resize: 32x32
+
+  - file: mdi:lock
+    id: arming2
+    resize: 32x32
+
+  - file: mdi:alarm-light-outline
+    id: triggered1
+    resize: 32x32
+
+  - file: mdi:alarm-light
+    id: triggered2
+    resize: 32x32
+
+  - file: mdi:wifi-refresh
+    id: connecting1
+    resize: 32x32
+  - file: mdi:wifi
+    id: connecting2
+    resize: 32x32
+       
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+
+switch:
+  - platform: template
+    id: display_rotation
+    name: "Rotate Display"    
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: True
+    entity_category: "config"
+
+preferences:
+  flash_write_interval: 1min
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x32"
+    #rotation: 180
+    reset_pin: GPIO16
+    address: 0x3C
+    update_interval: 500ms
+    lambda: |-
+      int                    image_x=0;
+      int                    image_y=it.get_height();
+      ImageAlign             image_align=ImageAlign::BOTTOM_LEFT;
+      esphome::image::Image* image1=id(connecting2);
+      esphome::image::Image* image2=id(connecting2);
+
+      int                    text_x=40;
+      int                    text_y=it.get_height()+4;
+      TextAlign              text_align=TextAlign::BOTTOM_LEFT;
+      const char*            text_center1="";
+      const char*            text_center2="";
+      esphome::font::Font*   text_font=id(bebas);
+      char                   text_temperature[25];
+
+      static bool            blink_aktiv = false;
+      static bool            blink = false;
+
+      //========================================
+      //Read states and set rotation
+      //========================================
+      const char* state_text = id(alarm_state).state.c_str();
+      sprintf(text_temperature, "%s °C", id(outdoor_temperature).state.c_str());
+      it.set_rotation(id(display_rotation).state?DISPLAY_ROTATION_180_DEGREES:DISPLAY_ROTATION_0_DEGREES);
+
+      //========================================
+      //Set display items according to state
+      //========================================
+      if(strcmp("disarmed",state_text)==0)
+      {
+      blink_aktiv=false;
+      text_center1=text_temperature;
+      image1=id(inactive);
+      text_font=id(bebasbig);
+      }
+      else if(strcmp("arming",state_text)==0)
+      {
+      blink_aktiv=true;
+      image1=id(arming1);
+      image2=id(arming2);
+      text_center1="ARMING    ";
+      text_center2="ARMING ...";
+      }
+      else if(strcmp("armed_home",state_text)==0)
+      {
+      blink_aktiv=false;
+      text_center1=text_temperature;
+      image1=id(armed_home);
+      text_font=id(bebasbig);
+      }
+      else if(strcmp("armed_away",state_text)==0)
+      {
+      blink_aktiv=false;
+      image1=id(armed_away);
+      text_center1="AKTIV";
+      }
+      else if(strcmp("pending",state_text)==0)
+      {
+      blink_aktiv=true;
+      image1=id(triggered1);
+      image2=id(triggered2);
+      text_center1="PENDING    ";
+      text_center2="PENDING ..."; 
+      }
+      else if(strcmp("triggered",state_text)==0)
+      { 
+      blink_aktiv=true;
+      image1=id(triggered1);
+      image2=id(triggered2);
+      text_center1="ALARM    ";
+      text_center2="ALARM !!!";  
+      }
+      else
+      {
+      blink_aktiv=true;
+      image1=id(connecting1);
+      image2=id(connecting2);
+      text_center1="VERBINDE    ";
+      text_center2="VERBINDE ...";
+      }
+
+      //========================================
+      // update display
+      //========================================
+      if(blink_aktiv && blink)
+      {
+      it.printf(text_x,text_y, text_font, text_align, "%s", text_center2);
+      it.image(image_x,image_y, image2, image_align); 
+      }
+      else
+      {
+      it.printf(text_x,text_y, text_font, text_align, "%s", text_center1);
+      it.image(image_x,image_y, image1, image_align);
+      }
+      //it.printf(it.get_width(),0, id(slkscr), TextAlign::TOP_RIGHT, "%s °C",  id(alarm_state).state.c_str());
+
+      //========================================
+      // toggle blinking
+      //========================================
+      blink=!blink;
+      
