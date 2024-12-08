@@ -4,22 +4,32 @@ esphome:
   board: esp01_1m
   esp8266_restore_from_flash: True
 
+# The device will keep its "configuration" settings like rotation, invert, contrast permanently
+# but save the values only every minute in case you fool around with the settings in order to 
+# limit the write cycles to a minimum. 
+preferences:
+  flash_write_interval: 1min
+
 wifi:
-  ssid: "xxx"
-  password: "xxx"
-  domain: .fritz.box
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  id: my_wifi
 
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
     ssid: "alarmdisplay fallback"
-    password: "xxx"
+    password: "xxxxxx"
 
 web_server: 
+  version: 3
   port: 80
   auth:
     username: xxx
     password: xxx
 
+captive_portal:
+
+# a diagnostice remote-restart-button can always help, especially if you *are* remote.
 button:
 - platform: restart
   name: Restart
@@ -27,13 +37,13 @@ button:
   icon: mdi:restart
   device_class: restart
 
-captive_portal:
-
 logger:
+  logs:
+    component: ERROR
 
 api:
-  password: "xxx"
-
+  encryption:
+    key: "xxx"
 ota:
   platform: esphome
   password: "xxx"
@@ -48,19 +58,16 @@ text_sensor:
     name: "Uptime"
     id: uptime_human
     icon: mdi:clock-start
+    entity_category: "diagnostic"
 
   - platform: homeassistant
+    # rename the following id to your home alarm entity 
     entity_id: alarm_control_panel.home_alarm
     name: "Alarm State"
     id: alarm_state
-    entity_category: "diagnostic"
-  
-  - platform: homeassistant
-    entity_id: sensor.your_sensor_name
-    name: "Outdoor Temperature"
-    id: outdoor_temperature
-    entity_category: "diagnostic"
+    internal: True
 
+# some more diagnostic output
 sensor:
   - platform: wifi_signal # Reports the WiFi signal strength/RSSI in dB
     name: WiFi Signal dB
@@ -98,55 +105,84 @@ sensor:
                 (to_string(seconds) + "s")
               ).c_str();
 
-font:  
+binary_sensor:
+  - platform: status
+    name: "API"
+    id: api_connected
+    internal: True
+
+font: 
+# you will have to source "slkscr.ttf" yourself and upload it to your esphome-directory / volume, next to your yaml file
   - file: "slkscr.ttf"
     id: slkscr
     size: 8
-  - file: "BebasNeue-Regular.ttf"
-    id: bebas
-    size: 25
-  - file: "BebasNeue-Regular.ttf"
-    id: bebasbig
-    size: 30
   - file: "gfonts://Roboto"
-    id: roboto
-    size: 18
+    id: big
+    size: 25
+  - file: "gfonts://Roboto"
+    id: medium
+    size: 15
+  - file: "gfonts://Roboto"
+    id: small
+    size: 12
 
 image:
-  - file: mdi:thermometer-low
-    id: inactive
+  - file: mdi:shield-off
+    id: disarmed
     resize: 32x32
 
-  - file: mdi:shield-home-outline
+  - file: mdi:shield-home
     id: armed_home
     resize: 32x32
 
-  - file: mdi:lock
+  - file: mdi:shield-lock #mdi:lock
     id: armed_away
     resize: 32x32
 
-  - file: mdi:lock-outline
+  - file: mdi:shield-outline
     id: arming1
     resize: 32x32
 
-  - file: mdi:lock
+  - file: mdi:shield
     id: arming2
     resize: 32x32
 
-  - file: mdi:alarm-light-outline
+  - file: mdi:bell-ring-outline
     id: triggered1
     resize: 32x32
 
-  - file: mdi:alarm-light
+  - file: mdi:bell-ring
     id: triggered2
+    resize: 32x32
+
+  - file: mdi:bell-alert
+    id: pending1
+    resize: 32x32
+
+  - file: mdi:bell
+    id: pending2
     resize: 32x32
 
   - file: mdi:wifi-refresh
     id: connecting1
     resize: 32x32
+
   - file: mdi:wifi
     id: connecting2
     resize: 32x32
+
+  - file: mdi:home-assistant
+    id: halogo
+    resize: 32x32
+
+  - file: mdi:sync
+    id: sync1
+    resize: 32x32
+
+  - file: mdi:cached
+    id: sync2
+    resize: 32x32
+    
        
 i2c:
   sda: GPIO4
@@ -154,120 +190,205 @@ i2c:
 
 switch:
   - platform: template
-    id: display_rotation
-    name: "Rotate Display"    
+    id: display_rotate
+    name: "Display Rotate"    
     restore_mode: RESTORE_DEFAULT_OFF
     optimistic: True
     entity_category: "config"
 
-preferences:
-  flash_write_interval: 1min
+  - platform: template
+    id: display_invert
+    name: "Display Invert"    
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: True
+    entity_category: "config"
+
+number:
+  - platform: template
+    id: display_contrast
+    name: "Display Contrast"
+    restore_value: True
+    initial_value: 100
+    optimistic: true
+    min_value: 0
+    max_value: 100
+    step: 10
+    entity_category: "config"
+
+globals:
+  - id: last_alarm
+    type: int
+    restore_value: no
+    initial_value: '0'
 
 display:
   - platform: ssd1306_i2c
     model: "SSD1306 128x32"
-    #rotation: 180
+    id: "alarm_display"
+    invert: False
+    contrast: 100%
     reset_pin: GPIO16
     address: 0x3C
     update_interval: 500ms
+    # sorry but i'm using a lot of lambda here. I would get mad if i had to follow every esphome-pattern
     lambda: |-
+      typedef esphome::ssd1306_i2c::I2CSSD1306 I2CDISPLAY;
+
+      I2CDISPLAY             display = ((I2CDISPLAY &) it);
       int                    image_x=0;
-      int                    image_y=it.get_height();
+      int                    image_y=it.get_height();  
       ImageAlign             image_align=ImageAlign::BOTTOM_LEFT;
       esphome::image::Image* image1=id(connecting2);
       esphome::image::Image* image2=id(connecting2);
 
-      int                    text_x=40;
-      int                    text_y=it.get_height()+4;
-      TextAlign              text_align=TextAlign::BOTTOM_LEFT;
+      int                    text_x=78;
+      int                    text_y=it.get_height()/2;
+      TextAlign              text_align=TextAlign::CENTER;
       const char*            text_center1="";
       const char*            text_center2="";
-      esphome::font::Font*   text_font=id(bebas);
-      char                   text_temperature[25];
+      const char*            text_armed_prefix = "armed_";
+      esphome::font::Font*   text_font=id(medium);
+      char                   text_timestring[30];
 
       static bool            blink_aktiv = false;
       static bool            blink = false;
 
-      //========================================
-      //Read states and set rotation
-      //========================================
+      //==========================================================
+      //Read alarm_state, temperature, rotate, invert and contrast
+      //==========================================================
       const char* state_text = id(alarm_state).state.c_str();
-      sprintf(text_temperature, "%s °C", id(outdoor_temperature).state.c_str());
-      it.set_rotation(id(display_rotation).state?DISPLAY_ROTATION_180_DEGREES:DISPLAY_ROTATION_0_DEGREES);
+      it.set_rotation(id(display_rotate).state?DISPLAY_ROTATION_180_DEGREES:DISPLAY_ROTATION_0_DEGREES);
+      display.set_contrast(id(display_contrast).state/100.0);
+      display.set_invert(id(display_invert).state);
 
-      //========================================
-      //Set display items according to state
-      //========================================
+      //=============================================================================
+      // Here comes the magic: every "state" of "home_alarm" is displayed differently
+      // The following blocks each describe a state of your entity "home_alarm".
+      // We are preparing some positions, text and icons accordingly. 
+      //=============================================================================
       if(strcmp("disarmed",state_text)==0)
       {
       blink_aktiv=false;
-      text_center1=text_temperature;
-      image1=id(inactive);
-      text_font=id(bebasbig);
+      text_center1="Disarmed";
+      image1=id(disarmed);
+      id(last_alarm)=0;
       }
       else if(strcmp("arming",state_text)==0)
       {
       blink_aktiv=true;
       image1=id(arming1);
       image2=id(arming2);
-      text_center1="ARMING    ";
-      text_center2="ARMING ...";
+      text_center1="Arming    ";
+      text_center2="Arming ...";
       }
       else if(strcmp("armed_home",state_text)==0)
       {
       blink_aktiv=false;
-      text_center1=text_temperature;
+      text_center1="Armed home";
       image1=id(armed_home);
-      text_font=id(bebasbig);
       }
-      else if(strcmp("armed_away",state_text)==0)
+      else if(strncmp(text_armed_prefix, state_text, strlen(text_armed_prefix))==0)
       {
       blink_aktiv=false;
       image1=id(armed_away);
-      text_center1="AKTIV";
+      text_center1="Armed away";
       }
       else if(strcmp("pending",state_text)==0)
       {
       blink_aktiv=true;
-      image1=id(triggered1);
-      image2=id(triggered2);
-      text_center1="PENDING    ";
-      text_center2="PENDING ..."; 
+      image1=id(pending1);
+      image2=id(pending2);
+      text_center1="Pending    ";
+      text_center2="Pending ..."; 
       }
       else if(strcmp("triggered",state_text)==0)
-      { 
+      {
       blink_aktiv=true;
-      image1=id(triggered1);
+      image1=id(triggered2);
       image2=id(triggered2);
-      text_center1="ALARM    ";
-      text_center2="ALARM !!!";  
+      text_center1="Triggered";
+      text_center2=text_center1;
+      id(last_alarm)=id(esptime).now().timestamp;
       }
-      else
+      else if(!id(my_wifi).is_connected())
       {
       blink_aktiv=true;
       image1=id(connecting1);
       image2=id(connecting2);
-      text_center1="VERBINDE    ";
-      text_center2="VERBINDE ...";
+      text_center1="connect WIFI    ";
+      text_center2="connect WIFI ...";
+      text_font=id(small);
+      //text_y=it.get_height()/2;
+      //text_align=TextAlign::CENTER_LEFT;
       }
-
-      //========================================
-      // update display
-      //========================================
-      if(blink_aktiv && blink)
+      else if(!id(api_connected).state)
       {
-      it.printf(text_x,text_y, text_font, text_align, "%s", text_center2);
-      it.image(image_x,image_y, image2, image_align); 
+      blink_aktiv=true;
+      image1=id(halogo);
+      image2=id(halogo);
+      text_center1="connect API    ";
+      text_center2="connect API ...";
+      text_font=id(small);
+      //text_y=it.get_height()/2;
+      //text_align=TextAlign::CENTER_LEFT;
       }
       else
       {
+      blink_aktiv=true;
+      image1=id(sync1);
+      image2=id(sync2);
+      text_center1="sync state ...";
+      text_center2="sync state    ";
+      text_font=id(small);
+      //text_y=it.get_height()/2;
+      //text_align=TextAlign::CENTER_LEFT;
+      }
+      //========================================
+      // calculate time since last alarm
+      //========================================
+      if(id(last_alarm)) 
+      {
+      int seconds = ((int)id(esptime).now().timestamp) - id(last_alarm);
+      int days = seconds / (24 * 3600);
+      seconds = seconds % (24 * 3600);
+      int hours = seconds / 3600;
+      seconds = seconds % 3600;
+      int minutes = seconds / 60;
+      seconds = seconds % 60;
+      sprintf(text_timestring, "%dd %dh %dm AGO", days, hours, minutes);
+
+      }
+
+      //========================================
+      // update display: draw objects on display
+      // every single object was prepared in 
+      // one of the upper blocks.
+      //
+      // the display *can* blink. this means,
+      // that some states have "animated" icons
+      // the "triggered"-State also blinks
+      // by altering the display inversion and
+      // contrast.
+      //========================================
+      if(blink_aktiv && blink)
+      {
+      if(strcmp("triggered",state_text)==0) {display.set_contrast(1.0); display.set_invert(true);}
+      it.printf(text_x,text_y, text_font, text_align, "%s", text_center2);
+      it.image(image_x,image_y, image2, image_align);
+      }
+      else
+      {
+      if(strcmp("triggered",state_text)==0) {display.set_contrast(id(display_contrast).state/100.0); display.set_invert(false);}
       it.printf(text_x,text_y, text_font, text_align, "%s", text_center1);
       it.image(image_x,image_y, image1, image_align);
       }
-      //it.printf(it.get_width(),0, id(slkscr), TextAlign::TOP_RIGHT, "%s °C",  id(alarm_state).state.c_str());
+      if(strncmp(text_armed_prefix, state_text, strlen(text_armed_prefix))==0 && id(last_alarm))
+      {
+      it.printf(36, 0, id(slkscr), TextAlign::TOP_LEFT, "%s", "alarm triggered");
+      it.printf(36, it.get_height(), id(slkscr), TextAlign::BOTTOM_LEFT, "%s", text_timestring);
+      }
 
       //========================================
-      // toggle blinking
+      // ... and toggle blinking
       //========================================
       blink=!blink;
-      
