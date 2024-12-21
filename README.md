@@ -1,5 +1,5 @@
 # ESPHome alarm display
-this display reads the state of you home_alarm and displays it on a heltec wifi kit 8 accordingly
+this display reads the state of you home_alarm and displays it on a heltec wifi kit 8 accordingly. There is a matching 3D-printed case on my thingivers profile: https://www.thingiverse.com/thing:6853126
 
 ## Variables To configure
 - your Fallback Hotspot username
